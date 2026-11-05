@@ -76,6 +76,34 @@ app.patch('/api/v1/orders/:id/accept', async (req, res) => {
   res.status(200).json({ message: "Order accepted successfully", order: data[0] });
 });
 
+// Complete Order Endpoint (For Riders)
+app.patch('/api/v1/orders/:id/complete', async (req, res) => {
+  const orderId = req.params.id;
+  const { rider_id } = req.body; 
+
+  if (!rider_id) {
+    return res.status(400).json({ error: "rider_id is required to complete an order." });
+  }
+
+  const { data, error } = await supabase
+    .from('orders')
+    .update({ status: 'delivered' }) 
+    .eq('id', orderId)
+    .eq('status', 'active')    // Safety check: must be an active delivery
+    .eq('rider_id', rider_id)  // Safety check: must be the rider who accepted it
+    .select();
+
+  if (error) {
+    return res.status(400).json({ error: error.message });
+  }
+
+  if (data.length === 0) {
+    return res.status(400).json({ error: "Order not found, not active, or assigned to a different rider." });
+  }
+  
+  res.status(200).json({ message: "Order delivered successfully", order: data[0] });
+});
+
 const PORT = 3000;
 
 app.listen(PORT, () => {
