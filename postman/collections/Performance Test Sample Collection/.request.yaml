@@ -1,0 +1,11 @@
+$kind: http-request
+name: Accept Order
+url: 'http://localhost:3000/api/v1/orders/9662b16e-5901-4e60-b85e-89e64f465539/accept'
+method: PATCH
+body:
+  type: json
+  content: |-
+    {
+      "rider_id": "{{rider_id}}"
+    }
+order: 1000
