@@ -20,11 +20,13 @@ All endpoints are secured. The frontend must pass the Supabase user token in the
 
 **Request Body (JSON):**
 ```json
-{
-  "pickup_address": "123 Ikeja Road, Lagos",
-  "destination_address": "45 Yaba Tech, Lagos",
-  "price": "4500"
-}
+"order": [ 
+    { 
+      "id": "uuid", 
+      "status": "pending", 
+      "delivery_pin": "4921" 
+    } 
+  ]
 
 Success Response (201 Created):
 
@@ -86,13 +88,17 @@ Request Body: None (Rider ID is extracted securely from the Auth Token)
 
 Success Response (200 OK):
 
+json
 {
-  "message": "Order delivered successfully",
-  "order": { 
-    "id": "uuid", 
-    "status": "delivered", 
-    "rider_id": "uuid-of-the-logged-in-rider" 
-  }
+"message": "Order delivered and earnings deposited",
+"order": {
+"id": "uuid",
+"status": "delivered",
+"rider_id": "uuid-of-the-logged-in-rider",
+"price": 4500
+},
+"rider_earnings": 4500,
+"new_wallet_balance": 4500
 }
 
 ---
