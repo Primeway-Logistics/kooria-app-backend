@@ -4,7 +4,7 @@ This repository contains the complete Node.js/Express backend and Supabase integ
 
 ## Base URL
 * **Local Development:** `http://localhost:3000`
-* **Production URL:** *(Insert Render URL here)*
+* **Production URL:** https://kooria-express-api.onrender.com/
 
 ## Authentication
 All protected `/api/v1/*` endpoints require the logged-in user's Supabase JWT token in the request header:
@@ -487,3 +487,29 @@ Authorization: Bearer <Supabase_Access_Token>
   "sender_role": "customer"
 }
 ```
+---
+
+## 9. Push & In-App Notifications (Bell Icon)
+
+### 9.1 Register Device Push Token (FCM / Expo)
+* **Endpoint:** `POST /api/v1/notifications/device-token`
+* **Auth Required:** Yes
+* **Request Body:**
+```json
+{
+  "push_token": "ExponentPushToken[xxxxxxxxxxxxxxxxxxxxxx]"
+}
+```
+
+### 9.2 Get In-App Notifications & Unread Badge Count
+* **Endpoint:** `GET /api/v1/notifications`
+* **Auth Required:** Yes
+* **Description:** Returns the user's latest 50 in-app notifications and `unread_count` for the top-right bell badge.
+
+### 9.3 Mark Single Notification as Read
+* **Endpoint:** `PATCH /api/v1/notifications/:id/read`
+* **Auth Required:** Yes
+
+### 9.4 Mark All Notifications as Read
+* **Endpoint:** `PATCH /api/v1/notifications/read-all`
+* **Auth Required:** Yes

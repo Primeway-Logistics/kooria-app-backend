@@ -36,6 +36,51 @@ const authenticateUser = async (req, res, next) => {
 };
 
 // ==========================================
+// NOTIFICATION DISPATCH HELPER
+// ==========================================
+const triggerNotification = async ({ user_id, order_id, waybill_number, title, message, type }) => {
+  try {
+    if (!user_id) return;
+
+    // 1. Save to In-App Notification Bell Feed
+    await supabase.from('notifications').insert([{
+      user_id,
+      order_id: order_id || null,
+      waybill_number: waybill_number || null,
+      title,
+      message,
+      type: type || 'order_update'
+    }]);
+
+    // 2. Check if user has Push Notifications enabled and a registered device token
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('push_token, push_notifications')
+      .eq('id', user_id);
+
+    const userProf = (profile && profile[0]) ? profile[0] : {};
+
+    if (userProf.push_notifications !== false && userProf.push_token) {
+      if (userProf.push_token.startsWith('ExponentPushToken')) {
+        await fetch('https://exp.host/--/api/v2/push/send', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            to: userProf.push_token,
+            sound: 'default',
+            title,
+            body: message,
+            data: { order_id, waybill_number, type }
+          })
+        });
+      }
+    }
+  } catch (err) {
+    console.error('Notification dispatch error:', err.message);
+  }
+};
+
+// ==========================================
 // 1. NETWORK STATUS, PUBLIC TRACKING & QR VERIFY
 // ==========================================
 
@@ -254,6 +299,15 @@ app.post('/api/v1/riders/onboarding/kyc', authenticateUser, async (req, res) => 
     .select();
 
   if (error) return res.status(400).json({ error: error.message });
+
+  await triggerNotification({
+    user_id: riderId,
+    title: save_for_later ? "Onboarding Draft Saved" : "KYC Documents Submitted",
+    message: save_for_later
+      ? "Your rider application progress has been saved."
+      : "Your compliance documents are being verified with LASDRI & Leadway Assurance.",
+    type: "security"
+  });
 
   res.status(200).json({
     message: save_for_later
@@ -829,6 +883,15 @@ app.post('/api/v1/orders', authenticateUser, async (req, res) => {
     return res.status(400).json({ error: orderError.message });
   }
 
+  await triggerNotification({
+    user_id: customer_id,
+    order_id: orderData[0].id,
+    waybill_number,
+    title: "Order Confirmed & Escrowed",
+    message: `Waybill #${waybill_number} created. SafeDrop Release PIN: ${delivery_pin}. Connecting to nearest rider.`,
+    type: "order_update"
+  });
+
   res.status(201).json({
     message: "Order created and payment deducted successfully",
     order: orderData[0],
@@ -1088,6 +1151,15 @@ app.patch('/api/v1/orders/:id/accept', authenticateUser, async (req, res) => {
   if (error) return res.status(400).json({ error: error.message });
   delete data[0].delivery_pin;
 
+  await triggerNotification({
+    user_id: data[0].customer_id,
+    order_id: data[0].id,
+    waybill_number: data[0].waybill_number,
+    title: "Dispatch Rider Assigned!",
+    message: `${riderName} accepted Waybill #${data[0].waybill_number} and is heading to your pickup point.`,
+    type: "order_update"
+  });
+
   res.status(200).json({ message: "Order accepted successfully", order: data[0] });
 });
 
@@ -1108,13 +1180,16 @@ app.patch('/api/v1/orders/:id/milestone', authenticateUser, async (req, res) => 
   }
 
   const stageMap = { picked_up: 3, in_transit: 4, out_for_delivery: 5 };
+  const milestoneTitle = title || `Status updated to ${status}`;
+  const milestoneDesc = description || 'Tamper-proof seal verified';
+
   const updatedMilestones = [
     ...(orderData[0].milestones || []),
     {
       stage: stageMap[status] || 3,
       key: status,
-      title: title || `Status updated to ${status}`,
-      description: description || 'Tamper-proof seal verified',
+      title: milestoneTitle,
+      description: milestoneDesc,
       timestamp: new Date().toISOString()
     }
   ];
@@ -1131,6 +1206,15 @@ app.patch('/api/v1/orders/:id/milestone', authenticateUser, async (req, res) => 
 
   if (error) return res.status(400).json({ error: error.message });
   delete data[0].delivery_pin;
+
+  await triggerNotification({
+    user_id: data[0].customer_id,
+    order_id: data[0].id,
+    waybill_number: data[0].waybill_number,
+    title: milestoneTitle,
+    message: `Waybill #${data[0].waybill_number}: ${milestoneDesc}`,
+    type: "order_update"
+  });
 
   res.status(200).json({ message: "Shipment milestone updated", order: data[0] });
 });
@@ -1176,6 +1260,15 @@ app.post('/api/v1/orders/:id/arrived', authenticateUser, async (req, res) => {
 
   if (error) return res.status(400).json({ error: error.message });
   delete data[0].delivery_pin;
+
+  await triggerNotification({
+    user_id: data[0].customer_id,
+    order_id: data[0].id,
+    waybill_number: data[0].waybill_number,
+    title: "Rider Arrived at Gate!",
+    message: `Your dispatch rider is at ${gate_name || 'the destination gate'}. Share your 4-digit SafeDrop PIN upon inspection.`,
+    type: "order_update"
+  });
 
   res.status(200).json({ message: "Customer notified: Rider has arrived at destination gate", order: data[0] });
 });
@@ -1235,6 +1328,15 @@ app.post('/api/v1/orders/:id/fail-report', authenticateUser, async (req, res) =>
 
   if (error) return res.status(400).json({ error: error.message });
   delete data[0].delivery_pin;
+
+  await triggerNotification({
+    user_id: data[0].customer_id,
+    order_id: data[0].id,
+    waybill_number: data[0].waybill_number,
+    title: "Delivery Attempt Unsuccessful",
+    message: `Waybill #${data[0].waybill_number} flagged: ${primary_reason}. Tap Reschedule in your app for a re-attempt.`,
+    type: "order_update"
+  });
 
   res.status(200).json({
     message: "Encrypted Failed Delivery Audit recorded. SLA rating protected.",
@@ -1354,6 +1456,15 @@ app.patch('/api/v1/orders/:id/cancel', authenticateUser, async (req, res) => {
     await supabase.from('wallets').update({ balance: newBalance }).eq('user_id', customer_id);
   }
 
+  await triggerNotification({
+    user_id: customer_id,
+    order_id: orderId,
+    waybill_number: updatedOrder[0].waybill_number,
+    title: "Order Canceled & Refunded",
+    message: `NGN ${refundAmount} has been refunded to your Kooria Wallet for #${updatedOrder[0].waybill_number}.`,
+    type: "wallet"
+  });
+
   res.status(200).json({
     message: "Order canceled and payment refunded to wallet",
     order: updatedOrder[0],
@@ -1444,6 +1555,24 @@ app.patch('/api/v1/orders/:id/complete', authenticateUser, async (req, res) => {
     status: 'Completed'
   }]);
 
+  await triggerNotification({
+    user_id: order.customer_id,
+    order_id: order.id,
+    waybill_number: order.waybill_number,
+    title: "SafeDrop Certified: Package Delivered!",
+    message: `Waybill #${order.waybill_number} was delivered safely to ${order.recipient_name || 'recipient'}.`,
+    type: "order_update"
+  });
+
+  await triggerNotification({
+    user_id: rider_id,
+    order_id: order.id,
+    waybill_number: order.waybill_number,
+    title: "Earnings Credited!",
+    message: `NGN ${totalEarning} has been deposited into your Kooria Wallet for #${order.waybill_number}.`,
+    type: "wallet"
+  });
+
   res.status(200).json({
     message: "SafeDrop Certified: Order delivered and earnings deposited",
     order: updatedOrder[0],
@@ -1500,6 +1629,15 @@ app.post('/api/v1/orders/:id/rate-and-tip', authenticateUser, async (req, res) =
         tip_amount: tip,
         status: 'Credited'
       }]);
+
+      await triggerNotification({
+        user_id: order.rider_id,
+        order_id: order.id,
+        waybill_number: order.waybill_number,
+        title: "You Received a Tip!",
+        message: `Your customer sent you a NGN ${tip} tip (100% kept) for Waybill #${order.waybill_number}.`,
+        type: "wallet"
+      });
     }
   }
 
@@ -1658,6 +1796,14 @@ app.post('/api/v1/wallet/fund', authenticateUser, async (req, res) => {
   }
 
   if (responseError) return res.status(400).json({ error: responseError.message });
+
+  await triggerNotification({
+    user_id: userId,
+    title: "Kooria Wallet Funded",
+    message: `Your wallet has been topped up with NGN ${Number(amount)}. New balance: NGN ${responseData[0].balance}.`,
+    type: "wallet"
+  });
+
   res.status(200).json({ message: "Wallet funded successfully", wallet: responseData[0] });
 });
 
@@ -1743,6 +1889,13 @@ app.post('/api/v1/wallet/withdraw', authenticateUser, async (req, res) => {
     status: 'Settled'
   }]);
 
+  await triggerNotification({
+    user_id: userId,
+    title: "Instant Cashout Settled via NIP",
+    message: `NGN ${withdrawAmount} transferred to ${targetBank} (•••• ${targetAcct.slice(-4)}). Ref: ${trxReference}.`,
+    type: "wallet"
+  });
+
   res.status(200).json({
     message: "Direct settlement authorized via NIP Rails",
     telemetry: {
@@ -1806,6 +1959,15 @@ app.post('/api/v1/support/tickets', authenticateUser, async (req, res) => {
     message: `Ticket #${ticketCode} logged for Waybill ${waybill_number || 'N/A'}. Senior Dispatcher Tunde has joined this session.`
   }]);
 
+  await triggerNotification({
+    user_id: userId,
+    order_id: order_id || null,
+    waybill_number: waybill_number || null,
+    title: `Support Ticket #${ticketCode} Opened`,
+    message: `Senior Dispatcher Tunde has joined your live support session.`,
+    type: "support"
+  });
+
   res.status(201).json({
     message: "Live Support Session initiated with Lagos Central Dispatch",
     ticket: data[0]
@@ -1857,6 +2019,82 @@ app.post('/api/v1/support/tickets/:id/messages', authenticateUser, async (req, r
 
   if (error) return res.status(400).json({ error: error.message });
   res.status(201).json({ message: "Message sent to Lagos Central Dispatch", chat_message: data[0] });
+});
+
+// ==========================================
+// 9. PUSH & IN-APP NOTIFICATION ENDPOINTS
+// ==========================================
+
+// 9.1 Register / Update Mobile Device Push Token (FCM or Expo Token)
+app.post('/api/v1/notifications/device-token', authenticateUser, async (req, res) => {
+  const userId = req.user.id;
+  const { push_token } = req.body;
+
+  if (!push_token) {
+    return res.status(400).json({ error: "push_token is required." });
+  }
+
+  const { data, error } = await supabase
+    .from('profiles')
+    .update({ push_token, updated_at: new Date() })
+    .eq('id', userId)
+    .select('id, push_token, push_notifications');
+
+  if (error) return res.status(400).json({ error: error.message });
+  res.status(200).json({ message: "Device push token registered successfully", profile: data[0] });
+});
+
+// 9.2 Get In-App Notifications Feed (Top-Right Bell Icon)
+app.get('/api/v1/notifications', authenticateUser, async (req, res) => {
+  const userId = req.user.id;
+
+  const { data, error } = await supabase
+    .from('notifications')
+    .select('*')
+    .eq('user_id', userId)
+    .order('created_at', { ascending: false })
+    .limit(50);
+
+  if (error) return res.status(400).json({ error: error.message });
+
+  const list = data || [];
+  const unreadCount = list.filter(n => !n.is_read).length;
+
+  res.status(200).json({
+    message: "Notifications retrieved",
+    unread_count: unreadCount,
+    notifications: list
+  });
+});
+
+// 9.3 Mark Single Notification as Read
+app.patch('/api/v1/notifications/:id/read', authenticateUser, async (req, res) => {
+  const userId = req.user.id;
+  const notificationId = req.params.id;
+
+  const { data, error } = await supabase
+    .from('notifications')
+    .update({ is_read: true })
+    .eq('id', notificationId)
+    .eq('user_id', userId)
+    .select();
+
+  if (error) return res.status(400).json({ error: error.message });
+  res.status(200).json({ message: "Notification marked as read", notification: (data && data[0]) ? data[0] : null });
+});
+
+// 9.4 Mark All Notifications as Read ("Clear All" in Bell Menu)
+app.patch('/api/v1/notifications/read-all', authenticateUser, async (req, res) => {
+  const userId = req.user.id;
+
+  const { error } = await supabase
+    .from('notifications')
+    .update({ is_read: true })
+    .eq('user_id', userId)
+    .eq('is_read', false);
+
+  if (error) return res.status(400).json({ error: error.message });
+  res.status(200).json({ message: "All notifications marked as read" });
 });
 
 const PORT = process.env.PORT || 3000;
