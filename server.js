@@ -6,6 +6,13 @@ const { createClient } = require('@supabase/supabase-js');
 const app = express();
 app.use(cors());
 app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+
+// Safety Middleware: Prevents Express v5 500 crash when a request is sent with 'Body: none'
+app.use((req, res, next) => {
+  if (!req.body) req.body = {};
+  next();
+});
 
 // Initialize Supabase
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
@@ -150,10 +157,155 @@ app.get('/api/v1/verify/:waybill', async (req, res) => {
 });
 
 // ==========================================
-// 2. PHONE OTP AUTH, RIDER LOGIN & ONBOARDING
+// 2. CUSTOMER LOGIN, PHONE OTP AUTH, RIDER LOGIN & ONBOARDING
 // ==========================================
 
-// 2.1 Send 6-Digit Phone Verification OTP (SMS, WhatsApp, or Call)
+// 2.1 Customer & Rider Account Sign Up ("Create a Kooria Account")
+app.post('/api/v1/auth/register', async (req, res) => {
+  try {
+    const { full_name, phone_number, email, password, role } = req.body;
+
+    if (!full_name || !phone_number || !email || !password) {
+      return res.status(400).json({ error: "full_name, phone_number, email, and password (min 8 chars) are required." });
+    }
+
+    if (String(password).length < 8) {
+      return res.status(400).json({ error: "Password must be at least 8 characters long." });
+    }
+
+    const { data: authData, error: authError } = await supabase.auth.signUp({
+      email: String(email).trim().toLowerCase(),
+      password: String(password),
+      options: {
+        data: {
+          full_name: String(full_name).trim(),
+          phone_number: String(phone_number).trim(),
+          role: role || 'customer'
+        }
+      }
+    });
+
+    if (authError) {
+      return res.status(400).json({ error: authError.message });
+    }
+
+    const userId = authData.user?.id;
+    let profile = null;
+
+    if (userId) {
+      const riderCode = `KR-${Math.floor(100 + Math.random() * 900)}`;
+      const { data: newProfile } = await supabase
+        .from('profiles')
+        .upsert({
+          id: userId,
+          full_name: String(full_name).trim(),
+          phone_number: String(phone_number).trim(),
+          email: String(email).trim().toLowerCase(),
+          role: role || 'customer',
+          rider_code: riderCode,
+          updated_at: new Date()
+        })
+        .select();
+
+      profile = (newProfile && newProfile[0]) ? newProfile[0] : null;
+
+      await supabase.from('wallets').upsert({
+        user_id: userId,
+        balance: 0,
+        pending_escrow: 0
+      }, { onConflict: 'user_id' });
+    }
+
+    res.status(201).json({
+      message: "Kooria account created successfully",
+      access_token: authData.session?.access_token || null,
+      refresh_token: authData.session?.refresh_token || null,
+      user: authData.user,
+      profile
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message || "Registration failed." });
+  }
+});
+
+// 2.2 Customer Login with Phone or Email + Password ("Welcome back")
+app.post('/api/v1/auth/login', async (req, res) => {
+  try {
+    const { identifier, email, phone_number, password, remember_device } = req.body;
+    const loginInput = String(identifier || email || phone_number || '').trim();
+
+    if (!loginInput || !password) {
+      return res.status(400).json({ error: "Phone or Email and security password are required." });
+    }
+
+    let targetEmail = loginInput;
+
+    // If user entered a phone number instead of an email, look up their email in profiles
+    if (!loginInput.includes('@')) {
+      const cleanPhone = loginInput.replace(/\s+/g, '');
+      const phoneTail = cleanPhone.slice(-8);
+
+      const { data: matchedProfiles } = await supabase
+        .from('profiles')
+        .select('email, phone_number')
+        .ilike('phone_number', `%${phoneTail}%`)
+        .limit(1);
+
+      if (!matchedProfiles || matchedProfiles.length === 0 || !matchedProfiles[0].email) {
+        return res.status(401).json({ error: "No Kooria account found with that phone number. Please log in with email or sign up." });
+      }
+      targetEmail = matchedProfiles[0].email;
+    }
+
+    const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
+      email: targetEmail.toLowerCase(),
+      password: String(password)
+    });
+
+    if (authError || !authData.user) {
+      return res.status(401).json({ error: authError?.message || "Invalid login credentials." });
+    }
+
+    const { data: profileData } = await supabase
+      .from('profiles')
+      .select('*')
+      .eq('id', authData.user.id);
+
+    res.status(200).json({
+      message: "Welcome back! Logged in successfully.",
+      access_token: authData.session?.access_token,
+      refresh_token: authData.session?.refresh_token,
+      remember_device: Boolean(remember_device),
+      user: authData.user,
+      profile: (profileData && profileData[0]) ? profileData[0] : null
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message || "Login failed." });
+  }
+});
+
+// 2.3 Forgot Password Reset Link ("Forgot Password?")
+app.post('/api/v1/auth/forgot-password', async (req, res) => {
+  try {
+    const { email, identifier } = req.body;
+    const target = String(email || identifier || '').trim();
+
+    if (!target) {
+      return res.status(400).json({ error: "Please provide your registered email address." });
+    }
+
+    const { error } = await supabase.auth.resetPasswordForEmail(target);
+    if (error) return res.status(400).json({ error: error.message });
+
+    res.status(200).json({
+      message: "Password reset instructions have been sent to your email."
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message || "Could not process password reset." });
+  }
+});
+
+// 2.4 Send 6-Digit Phone Verification OTP (SMS, WhatsApp, or Call)
 app.post('/api/v1/auth/send-otp', async (req, res) => {
   const { phone_number, channel } = req.body;
   if (!phone_number) {
@@ -187,7 +339,7 @@ app.post('/api/v1/auth/send-otp', async (req, res) => {
   });
 });
 
-// 2.2 Verify 6-Digit Phone OTP Code
+// 2.5 Verify 6-Digit Phone OTP Code
 app.post('/api/v1/auth/verify-otp', async (req, res) => {
   const { phone_number, otp_code } = req.body;
   if (!phone_number || !otp_code) {
@@ -217,21 +369,24 @@ app.post('/api/v1/auth/verify-otp', async (req, res) => {
   });
 });
 
-// 2.3 Rider Portal Fast Login (Mobile / Driver ID + Security Rider PIN)
+// 2.6 Rider Portal Fast Login (Mobile / Driver ID + Security Rider PIN)
 app.post('/api/v1/auth/rider-login', async (req, res) => {
-  const { identifier, security_pin } = req.body;
-  if (!identifier || !security_pin) {
-    return res.status(400).json({ error: "Registered Mobile/Driver ID and Security Rider PIN are required." });
+  const { identifier, phone_number, rider_code, security_pin, pin } = req.body;
+  const rawIdentifier = identifier || phone_number || rider_code;
+  const rawPin = security_pin || pin;
+
+  if (!rawIdentifier || !rawPin) {
+    return res.status(400).json({ error: "Registered Mobile/Driver ID (identifier) and Security Rider PIN (security_pin) are required in the JSON request body." });
   }
 
-  const cleanId = identifier.replace('#', '').trim();
+  const cleanId = String(rawIdentifier).replace('#', '').trim();
   const tailId = cleanId.slice(-8);
 
   const { data: riders, error } = await supabase
     .from('profiles')
     .select('*')
     .or(`phone_number.ilike.%${tailId}%,rider_code.ilike.%${cleanId}%`)
-    .eq('safepass_pin', security_pin.toString());
+    .eq('safepass_pin', String(rawPin).trim());
 
   if (error || !riders || riders.length === 0) {
     return res.status(401).json({ error: "Invalid Driver ID/Mobile or Security Rider PIN." });
@@ -245,11 +400,11 @@ app.post('/api/v1/auth/rider-login', async (req, res) => {
 
   res.status(200).json({
     message: "Welcome back! Rider terminal online & ready for dispatches.",
-    rider: updatedRider[0]
+    rider: (updatedRider && updatedRider[0]) ? updatedRider[0] : riders[0]
   });
 });
 
-// 2.4 Submit / Save 4-Step Rider Onboarding & KYC Verification
+// 2.7 Submit / Save 4-Step Rider Onboarding & KYC Verification
 app.post('/api/v1/riders/onboarding/kyc', authenticateUser, async (req, res) => {
   const riderId = req.user.id;
   const {
@@ -318,7 +473,7 @@ app.post('/api/v1/riders/onboarding/kyc', authenticateUser, async (req, res) => 
   });
 });
 
-// 2.5 Get Rider Onboarding Progress & Compliance Status
+// 2.8 Get Rider Onboarding Progress & Compliance Status
 app.get('/api/v1/riders/onboarding/status', authenticateUser, async (req, res) => {
   const riderId = req.user.id;
   const { data, error } = await supabase
@@ -2095,6 +2250,14 @@ app.patch('/api/v1/notifications/read-all', authenticateUser, async (req, res) =
 
   if (error) return res.status(400).json({ error: error.message });
   res.status(200).json({ message: "All notifications marked as read" });
+});
+
+// Global JSON Error Handler (Prevents HTML 500 error pages)
+app.use((err, req, res, next) => {
+  console.error('Unhandled Server Error:', err);
+  res.status(err.status || 500).json({
+    error: err.message || "Internal server error. Ensure request Body is set to raw JSON."
+  });
 });
 
 const PORT = process.env.PORT || 3000;

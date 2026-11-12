@@ -3,11 +3,12 @@
 This repository contains the complete Node.js/Express backend and Supabase integration for both the **Kooria Express Customer App** and **Kooria Rider Fleet App**.
 
 ## Base URL
+* **Production URL (Live):** `https://kooria-express-api.onrender.com`
 * **Local Development:** `http://localhost:3000`
-* **Production URL:** https://kooria-express-api.onrender.com/
 
-## Authentication
-All protected `/api/v1/*` endpoints require the logged-in user's Supabase JWT token in the request header:
+## Important Note for Postman & Frontend Testing
+1. **Request Body Format:** For all `POST` and `PATCH` requests that send data, set the Postman Body tab to **`raw` -> `JSON`** (`Content-Type: application/json`). Do not leave the Body tab on `none`.
+2. **Authentication Header:** All protected `/api/v1/*` endpoints require the logged-in user's Supabase JWT `access_token` in the request header:
 ```http
 Authorization: Bearer <Supabase_Access_Token>
 ```
@@ -19,7 +20,7 @@ Authorization: Bearer <Supabase_Access_Token>
 ### 1.1 Splash Screen Network Status
 * **Endpoint:** `GET /`
 * **Auth Required:** No
-* **Description:** Returns online rider count (`420`), active corridors, and SLA metrics for Customer & Rider splash screens.
+* **Description:** Returns online rider count (`420`), active corridors, SLA metrics, and hub sync progress (`78%`) for Customer & Rider splash screens.
 
 ### 1.2 Public Quick Track by Waybill
 * **Endpoint:** `GET /api/v1/orders/track/:waybill`
@@ -33,12 +34,50 @@ Authorization: Bearer <Supabase_Access_Token>
 
 ---
 
-## 2. Phone OTP Auth, Rider Portal Login & 4-Step KYC Onboarding
+## 2. Customer Auth, Phone OTP, Rider Portal Login & 4-Step KYC Onboarding
 
-### 2.1 Send 6-Digit Phone Verification Code
+### 2.1 Customer & Rider Sign Up ("Create a Kooria Account")
+* **Endpoint:** `POST /api/v1/auth/register`
+* **Auth Required:** No
+* **Description:** Registers a new user in Supabase Auth, auto-creates their `profiles` record and Kooria Wallet (`0` balance), and returns their `access_token`.
+* **Request Body (JSON):**
+```json
+{
+  "full_name": "Amina Yusuf",
+  "phone_number": "+2348031234567",
+  "email": "amina@example.com",
+  "password": "password123",
+  "role": "customer"
+}
+```
+
+### 2.2 Customer Login with Phone or Email ("Welcome back")
+* **Endpoint:** `POST /api/v1/auth/login`
+* **Auth Required:** No
+* **Description:** Authenticates a customer using either their **Phone Number** (`+2348123456789`) OR **Email Address** (`name@domain.com`) plus their password, returning a fresh `access_token`.
+* **Request Body (JSON):**
+```json
+{
+  "identifier": "+2348031234567",
+  "password": "password123",
+  "remember_device": true
+}
+```
+
+### 2.3 Forgot Password Reset ("Forgot Password?")
+* **Endpoint:** `POST /api/v1/auth/forgot-password`
+* **Auth Required:** No
+* **Request Body (JSON):**
+```json
+{
+  "email": "amina@example.com"
+}
+```
+
+### 2.4 Send 6-Digit Phone Verification Code
 * **Endpoint:** `POST /api/v1/auth/send-otp`
 * **Auth Required:** No
-* **Request Body:**
+* **Request Body (JSON):**
 ```json
 {
   "phone_number": "+2348123456789",
@@ -47,10 +86,10 @@ Authorization: Bearer <Supabase_Access_Token>
 ```
 * **Notes:** `channel` accepts `"sms"`, `"whatsapp"`, or `"call"`. Also returns `active_waybill_banner` if the phone number has an active delivery awaiting handshake.
 
-### 2.2 Verify 6-Digit Phone Code
+### 2.5 Verify 6-Digit Phone Code
 * **Endpoint:** `POST /api/v1/auth/verify-otp`
 * **Auth Required:** No
-* **Request Body:**
+* **Request Body (JSON):**
 ```json
 {
   "phone_number": "+2348123456789",
@@ -58,21 +97,22 @@ Authorization: Bearer <Supabase_Access_Token>
 }
 ```
 
-### 2.3 Rider Portal Fast Login (Mobile / Driver ID + Security Rider PIN)
+### 2.6 Rider Portal Fast Login (Mobile / Driver ID + Security Rider PIN)
 * **Endpoint:** `POST /api/v1/auth/rider-login`
 * **Auth Required:** No
-* **Request Body:**
+* **Request Body (JSON):**
 ```json
 {
   "identifier": "KR-402",
   "security_pin": "1234"
 }
 ```
+* **Notes:** `identifier` accepts either the rider's Driver ID (`KR-402`) or Registered Mobile (`+2348012345678`).
 
-### 2.4 Submit 4-Step Rider Onboarding & KYC Verification ("Apply to Ride")
+### 2.7 Submit 4-Step Rider Onboarding & KYC Verification ("Apply to Ride")
 * **Endpoint:** `POST /api/v1/riders/onboarding/kyc`
 * **Auth Required:** Yes
-* **Request Body:**
+* **Request Body (JSON):**
 ```json
 {
   "onboarding_step": 2,
@@ -94,7 +134,7 @@ Authorization: Bearer <Supabase_Access_Token>
 }
 ```
 
-### 2.5 Get Rider Onboarding Progress & Compliance Status
+### 2.8 Get Rider Onboarding Progress & Compliance Status
 * **Endpoint:** `GET /api/v1/riders/onboarding/status`
 * **Auth Required:** Yes
 
@@ -110,7 +150,7 @@ Authorization: Bearer <Supabase_Access_Token>
 ### 3.2 Update Profile, Preferences, Next of Kin & Payout Bank
 * **Endpoint:** `PATCH /api/v1/users/me`
 * **Auth Required:** Yes
-* **Request Body:**
+* **Request Body (JSON):**
 ```json
 {
   "full_name": "Amina Yusuf",
@@ -128,7 +168,7 @@ Authorization: Bearer <Supabase_Access_Token>
 ### 3.3 Set / Reset 4-Digit SafeDrop PIN or Rider SafePass PIN
 * **Endpoint:** `POST /api/v1/users/me/safedrop-pin`
 * **Auth Required:** Yes
-* **Request Body:**
+* **Request Body (JSON):**
 ```json
 {
   "pin": "4821",
@@ -149,7 +189,7 @@ Authorization: Bearer <Supabase_Access_Token>
 ### 4.2 Toggle Rider Online / Standby Availability
 * **Endpoint:** `PATCH /api/v1/riders/availability`
 * **Auth Required:** Yes
-* **Request Body:**
+* **Request Body (JSON):**
 ```json
 {
   "is_online": true
@@ -159,7 +199,7 @@ Authorization: Bearer <Supabase_Access_Token>
 ### 4.3 Update Rider Live GPS & Speed
 * **Endpoint:** `PATCH /api/v1/riders/location`
 * **Auth Required:** Yes
-* **Request Body:**
+* **Request Body (JSON):**
 ```json
 {
   "latitude": 6.4474,
@@ -171,7 +211,7 @@ Authorization: Bearer <Supabase_Access_Token>
 ### 4.4 Submit Daily Safety & Gear Inspection Checklist
 * **Endpoint:** `PATCH /api/v1/riders/gear-inspection`
 * **Auth Required:** Yes
-* **Request Body:**
+* **Request Body (JSON):**
 ```json
 {
   "bluetooth_helmet": true,
@@ -184,7 +224,7 @@ Authorization: Bearer <Supabase_Access_Token>
 ### 4.5 Log Bike Maintenance / Flag Telemetry Issue
 * **Endpoint:** `POST /api/v1/riders/maintenance`
 * **Auth Required:** Yes
-* **Request Body:**
+* **Request Body (JSON):**
 ```json
 {
   "issue_type": "maintenance_flag",
@@ -198,7 +238,7 @@ Authorization: Bearer <Supabase_Access_Token>
 ### 4.6 Trigger SOS Emergency / LASAMBUS / Traffic Blockage
 * **Endpoint:** `POST /api/v1/riders/sos`
 * **Auth Required:** Yes
-* **Request Body:**
+* **Request Body (JSON):**
 ```json
 {
   "order_id": "uuid",
@@ -220,7 +260,7 @@ Authorization: Bearer <Supabase_Access_Token>
 ### 5.2 Add New Saved Address
 * **Endpoint:** `POST /api/v1/addresses`
 * **Auth Required:** Yes
-* **Request Body:**
+* **Request Body (JSON):**
 ```json
 {
   "label": "Home",
@@ -252,7 +292,7 @@ Authorization: Bearer <Supabase_Access_Token>
 ### 6.1 Estimate Fare & 7-Itemized Escrow Breakdown
 * **Endpoint:** `POST /api/v1/orders/estimate`
 * **Auth Required:** Yes
-* **Request Body:**
+* **Request Body (JSON):**
 ```json
 {
   "pickup_lat": 6.5158,
@@ -265,7 +305,7 @@ Authorization: Bearer <Supabase_Access_Token>
 ### 6.2 Create Order (Step 1 & 2 Complete Flow)
 * **Endpoint:** `POST /api/v1/orders`
 * **Auth Required:** Yes
-* **Request Body:**
+* **Request Body (JSON):**
 ```json
 {
   "pickup_address": "14 Commercial Ave, Sabo Yaba, Lagos",
@@ -325,7 +365,7 @@ Authorization: Bearer <Supabase_Access_Token>
 ### 6.10 Update Shipment Milestone (Rider App)
 * **Endpoint:** `PATCH /api/v1/orders/:id/milestone`
 * **Auth Required:** Yes
-* **Request Body:**
+* **Request Body (JSON):**
 ```json
 {
   "status": "out_for_delivery",
@@ -338,7 +378,7 @@ Authorization: Bearer <Supabase_Access_Token>
 ### 6.11 Mark Arrived at Destination Gate (Rider App)
 * **Endpoint:** `POST /api/v1/orders/:id/arrived`
 * **Auth Required:** Yes
-* **Request Body:**
+* **Request Body (JSON):**
 ```json
 {
   "gate_name": "Gate 2",
@@ -350,7 +390,7 @@ Authorization: Bearer <Supabase_Access_Token>
 ### 6.12 Submit Anti-Fraud Failed Delivery Report (Rider Dispatch Audit)
 * **Endpoint:** `POST /api/v1/orders/:id/fail-report`
 * **Auth Required:** Yes
-* **Request Body:**
+* **Request Body (JSON):**
 ```json
 {
   "primary_reason": "Customer unreachable",
@@ -365,7 +405,7 @@ Authorization: Bearer <Supabase_Access_Token>
 ### 6.13 Extend Wait Time (+10m) or Authorize Contactless Drop
 * **Endpoint:** `POST /api/v1/orders/:id/extend-wait`
 * **Auth Required:** Yes
-* **Request Body:**
+* **Request Body (JSON):**
 ```json
 {
   "extra_minutes": 10,
@@ -384,7 +424,7 @@ Authorization: Bearer <Supabase_Access_Token>
 ### 6.16 Complete Order with SafeDrop PIN (Rider App)
 * **Endpoint:** `PATCH /api/v1/orders/:id/complete`
 * **Auth Required:** Yes
-* **Request Body:**
+* **Request Body (JSON):**
 ```json
 {
   "pin": "4821",
@@ -397,7 +437,7 @@ Authorization: Bearer <Supabase_Access_Token>
 ### 6.17 Rate & Tip Rider (Customer App)
 * **Endpoint:** `POST /api/v1/orders/:id/rate-and-tip`
 * **Auth Required:** Yes
-* **Request Body:**
+* **Request Body (JSON):**
 ```json
 {
   "rating": 5,
@@ -422,7 +462,7 @@ Authorization: Bearer <Supabase_Access_Token>
 ### 7.3 Fund Wallet (Customer Top Up)
 * **Endpoint:** `POST /api/v1/wallet/fund`
 * **Auth Required:** Yes
-* **Request Body:**
+* **Request Body (JSON):**
 ```json
 {
   "amount": 5000
@@ -432,7 +472,7 @@ Authorization: Bearer <Supabase_Access_Token>
 ### 7.4 Save Bank Card (Customer App)
 * **Endpoint:** `POST /api/v1/wallet/cards`
 * **Auth Required:** Yes
-* **Request Body:**
+* **Request Body (JSON):**
 ```json
 {
   "bank_name": "GTBank Lagos",
@@ -447,7 +487,7 @@ Authorization: Bearer <Supabase_Access_Token>
 ### 7.5 Rider Instant Cashout (NIP Settlement Telemetry)
 * **Endpoint:** `POST /api/v1/wallet/withdraw`
 * **Auth Required:** Yes
-* **Request Body:**
+* **Request Body (JSON):**
 ```json
 {
   "amount": 28650,
@@ -463,7 +503,7 @@ Authorization: Bearer <Supabase_Access_Token>
 ### 8.1 Open Support / Dispute Ticket
 * **Endpoint:** `POST /api/v1/support/tickets`
 * **Auth Required:** Yes
-* **Request Body:**
+* **Request Body (JSON):**
 ```json
 {
   "order_id": "uuid",
@@ -480,13 +520,14 @@ Authorization: Bearer <Supabase_Access_Token>
 ### 8.3 Send Message in Live Support Chat
 * **Endpoint:** `POST /api/v1/support/tickets/:id/messages`
 * **Auth Required:** Yes
-* **Request Body:**
+* **Request Body (JSON):**
 ```json
 {
   "message": "The intercom is down today, please tell John to use gate code #4491.",
   "sender_role": "customer"
 }
 ```
+
 ---
 
 ## 9. Push & In-App Notifications (Bell Icon)
@@ -494,7 +535,7 @@ Authorization: Bearer <Supabase_Access_Token>
 ### 9.1 Register Device Push Token (FCM / Expo)
 * **Endpoint:** `POST /api/v1/notifications/device-token`
 * **Auth Required:** Yes
-* **Request Body:**
+* **Request Body (JSON):**
 ```json
 {
   "push_token": "ExponentPushToken[xxxxxxxxxxxxxxxxxxxxxx]"
@@ -504,7 +545,6 @@ Authorization: Bearer <Supabase_Access_Token>
 ### 9.2 Get In-App Notifications & Unread Badge Count
 * **Endpoint:** `GET /api/v1/notifications`
 * **Auth Required:** Yes
-* **Description:** Returns the user's latest 50 in-app notifications and `unread_count` for the top-right bell badge.
 
 ### 9.3 Mark Single Notification as Read
 * **Endpoint:** `PATCH /api/v1/notifications/:id/read`
